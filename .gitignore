@@ -1,0 +1,28 @@
+# Compiled binary
+ebpf-collector
+
+# Compiled eBPF objects (rebuilt from .c sources)
+ebpf/*.o
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+vendor/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key

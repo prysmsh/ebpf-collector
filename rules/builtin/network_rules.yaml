@@ -1,0 +1,99 @@
+# Network detection rules
+
+- rule: Shell making outbound connection
+  desc: A shell process is making an outbound network connection, strong reverse shell indicator
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'outbound' and
+    shell_procs
+  output: "Shell %proc.name% connecting to %net.dst_ip%:%net.dst_port% (pid=%proc.pid% container=%container.name%)"
+  priority: CRITICAL
+  tags: [T1059.004, reverse_shell, mitre_execution]
+  metadata:
+    mitre_attck: "T1059.004 - Unix Shell"
+
+- rule: Connection to known C2 port
+  desc: Outbound connection to a port commonly used by C2 frameworks and backdoors
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'outbound' and
+    net.dst_port in [4444, 5555, 6666, 6667, 9999, 12345, 31337, 4443, 8443]
+  output: "C2 port connection to %net.dst_ip%:%net.dst_port% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: WARNING
+  tags: [T1571, c2_communication, mitre_command_and_control]
+  metadata:
+    mitre_attck: "T1571 - Non-Standard Port"
+
+- rule: Possible mining pool connection
+  desc: Connection to ports commonly used by cryptocurrency mining pools
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'outbound' and
+    net.dst_port in [3333, 5555, 7777, 9999]
+  output: "Mining pool connection to %net.dst_ip%:%net.dst_port% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1496, cryptominer, mitre_impact]
+  metadata:
+    mitre_attck: "T1496 - Resource Hijacking"
+
+- rule: Container lateral movement
+  desc: Container making connection to internal/private IP on non-standard port
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'outbound' and
+    container.id != '' and
+    net.dst_port != 443 and
+    net.dst_port != 80 and
+    (net.dst_ip.startsWith('10.') or
+     net.dst_ip.startsWith('172.16.') or
+     net.dst_ip.startsWith('172.17.') or
+     net.dst_ip.startsWith('172.18.') or
+     net.dst_ip.startsWith('172.19.') or
+     net.dst_ip.startsWith('172.20.') or
+     net.dst_ip.startsWith('172.21.') or
+     net.dst_ip.startsWith('172.22.') or
+     net.dst_ip.startsWith('172.23.') or
+     net.dst_ip.startsWith('172.24.') or
+     net.dst_ip.startsWith('172.25.') or
+     net.dst_ip.startsWith('172.26.') or
+     net.dst_ip.startsWith('172.27.') or
+     net.dst_ip.startsWith('172.28.') or
+     net.dst_ip.startsWith('172.29.') or
+     net.dst_ip.startsWith('172.30.') or
+     net.dst_ip.startsWith('172.31.') or
+     net.dst_ip.startsWith('192.168.'))
+  output: "Container lateral movement: %proc.name% connecting to %net.dst_ip%:%net.dst_port% (container=%container.name%)"
+  priority: WARNING
+  tags: [T1021, lateral_movement, mitre_lateral_movement]
+  metadata:
+    mitre_attck: "T1021 - Remote Services"
+
+- rule: Bind shell detection
+  desc: A shell process is listening on a port, indicating a bind shell
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'listen' and
+    shell_procs
+  output: "Bind shell: %proc.name% listening on port %net.src_port% (pid=%proc.pid% container=%container.name%)"
+  priority: CRITICAL
+  tags: [T1059.004, bind_shell, mitre_execution]
+  metadata:
+    mitre_attck: "T1059.004 - Unix Shell"
+
+- rule: Unexpected inbound connection to container
+  desc: An inbound TCP connection was accepted by a process in a container on a non-standard port
+  condition: >
+    evt.type == 'connect' and
+    net.direction == 'inbound' and
+    container.id != '' and
+    net.dst_port != 80 and
+    net.dst_port != 443 and
+    net.dst_port != 8080 and
+    net.dst_port != 8443 and
+    net.dst_port != 9090 and
+    net.dst_port != 3000
+  output: "Unexpected inbound connection to %net.dst_ip%:%net.dst_port% by %proc.name% (container=%container.name%)"
+  priority: NOTICE
+  tags: [T1571, inbound, mitre_command_and_control]
+  metadata:
+    mitre_attck: "T1571 - Non-Standard Port"

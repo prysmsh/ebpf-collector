@@ -1,0 +1,67 @@
+- macro: shell_procs
+  condition: proc.name in ['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh']
+
+- macro: web_server_procs
+  condition: proc.name in ['nginx', 'apache', 'apache2', 'httpd', 'php-fpm', 'php', 'node', 'python', 'ruby', 'java', 'tomcat']
+
+- macro: container_event
+  condition: container.id != ''
+
+- macro: write_op
+  condition: file.flags > 0
+
+- macro: sensitive_file_access
+  condition: >
+    file.path in ['/etc/shadow', '/etc/gshadow', '/etc/sudoers',
+    '/root/.ssh/id_rsa', '/root/.ssh/id_ed25519',
+    '/root/.bash_history', '/root/.aws/credentials']
+
+- macro: credential_file
+  condition: >
+    file.path.contains('/etc/shadow') or
+    file.path.contains('/etc/sudoers') or
+    file.path.contains('.ssh/id_rsa') or
+    file.path.contains('.ssh/id_ed25519') or
+    file.path.contains('.ssh/authorized_keys') or
+    file.path.contains('.aws/credentials') or
+    file.path.contains('.kube/config') or
+    file.path.contains('.docker/config.json') or
+    file.path.contains('.git-credentials') or
+    file.path.contains('.netrc')
+
+- macro: persistence_path
+  condition: >
+    file.path.contains('/etc/cron') or
+    file.path.contains('/etc/systemd') or
+    file.path.contains('/.bashrc') or
+    file.path.contains('/.profile')
+
+- macro: rootkit_path
+  condition: >
+    file.path.contains('/lib/modules') or
+    file.path.contains('ld.so.preload')
+
+- macro: k8s_secret_path
+  condition: >
+    file.path.startsWith('/var/run/secrets/') or
+    file.path.startsWith('/run/secrets/')
+
+- macro: k8s_sa_token
+  condition: >
+    file.path.endsWith('/token') and
+    k8s_secret_path
+
+- list: c2_ports
+  items: [4444, 5555, 6666, 6667, 9999, 12345, 31337, 4443, 8443]
+
+- list: mining_pool_ports
+  items: [3333, 5555, 7777, 9999]
+
+- list: sensitive_dirs
+  items:
+    - /etc/shadow
+    - /etc/gshadow
+    - /etc/sudoers
+    - /proc/kcore
+    - /dev/mem
+    - /dev/kmem

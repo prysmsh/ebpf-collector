@@ -1,0 +1,340 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prysm-ebpf-collector
+  namespace: prysm-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prysm-ebpf-collector
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prysm-ebpf-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prysm-ebpf-collector
+subjects:
+- kind: ServiceAccount
+  name: prysm-ebpf-collector
+  namespace: prysm-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: prysm-ebpf-keys
+  namespace: prysm-system
+type: Opaque
+data:
+  # Base64 encoded Ed25519 public key for signature verification
+  signing.pub: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prysm-ebpf-config
+  namespace: prysm-system
+data:
+  signatures.json: |
+    {
+      "version": "1.0.0",
+      "created_at": "2024-01-01T00:00:00Z",
+      "programs": [],
+      "public_key": "",
+      "manifest_hash": ""
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: prysm-ebpf-collector
+  namespace: prysm-system
+  labels:
+    app: prysm-ebpf-collector
+    component: security-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: prysm-ebpf-collector
+  template:
+    metadata:
+      labels:
+        app: prysm-ebpf-collector
+        component: security-monitoring
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: runtime/default
+    spec:
+      serviceAccountName: prysm-ebpf-collector
+      hostNetwork: false  # Changed from true for better isolation
+      hostPID: false      # Changed from true for better isolation
+      shareProcessNamespace: false
+      
+      # Security context for the pod
+      securityContext:
+        runAsNonRoot: false  # eBPF requires root for now
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+        supplementalGroups: []
+      
+      # Node selection and tolerations
+      nodeSelector:
+        kubernetes.io/os: linux
+      
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      
+      # Init container to verify security setup
+      initContainers:
+      - name: security-check
+        image: alpine:3.18
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Verifying security setup..."
+          # Check if required mount points exist
+          test -d /host/sys/fs/bpf || (echo "BPF filesystem not available" && exit 1)
+          test -d /host/lib/modules || (echo "Kernel modules not available" && exit 1)
+          echo "Security checks passed"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: false
+          runAsUser: 0
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: host-lib-modules
+          mountPath: /host/lib/modules
+          readOnly: true
+      
+      containers:
+      - name: ebpf-collector
+        image: beehivesec/prysm-ebpf-collector:latest
+        imagePullPolicy: Always
+        
+        # Security context with specific capabilities
+        securityContext:
+          privileged: true  # Required for eBPF operations
+          allowPrivilegeEscalation: true
+          runAsNonRoot: false
+          runAsUser: 0
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        # Environment variables
+        env:
+        - name: PRYSM_ORG_ID
+          value: "2"
+        - name: PRYSM_SINK_ID  
+          value: "1"
+        - name: PRYSM_CLUSTER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['prysm.cluster.id']
+        - name: PRYSM_EBPF_ENDPOINT
+          value: "https://api.prysm.sh/api/v1/logs/ingest"
+        - name: PRYSM_LOG_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: prysm-agent-prod-config
+              key: AGENT_TOKEN
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: HEARTBEAT_INTERVAL
+          value: "30s"
+        - name: HTTP_TIMEOUT
+          value: "10s"
+        
+        # Volume mounts with security restrictions
+        volumeMounts:
+        - name: bpf-maps
+          mountPath: /sys/fs/bpf
+        - name: host-lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+        - name: host-usr-src
+          mountPath: /usr/src
+          readOnly: true
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: ebpf-programs
+          mountPath: /app/ebpf
+          readOnly: true
+        - name: signing-keys
+          mountPath: /etc/prysm/keys
+          readOnly: true
+        - name: audit-logs
+          mountPath: /var/log
+          readOnly: false
+        - name: tmp
+          mountPath: /tmp
+          readOnly: false
+        
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep ebpf-collector"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh  
+            - -c
+            - "test -f /tmp/ebpf-ready"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+      
+      # Volumes with security considerations
+      volumes:
+      - name: bpf-maps
+        hostPath:
+          path: /sys/fs/bpf
+          type: DirectoryOrCreate
+      - name: host-lib-modules
+        hostPath:
+          path: /lib/modules
+          type: Directory
+      - name: host-usr-src
+        hostPath:
+          path: /usr/src
+          type: DirectoryOrCreate
+      - name: proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: ebpf-programs
+        configMap:
+          name: prysm-ebpf-programs
+          defaultMode: 0444
+      - name: signing-keys
+        secret:
+          secretName: prysm-ebpf-keys
+          defaultMode: 0400
+      - name: audit-logs
+        hostPath:
+          path: /var/log/prysm
+          type: DirectoryOrCreate
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+      
+      # DNS and networking policy
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      
+      # Priority and preemption
+      priorityClassName: system-node-critical
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prysm-ebpf-programs
+  namespace: prysm-system
+binaryData:
+  # Base64 encoded compiled eBPF programs would go here
+  # In production, these would be the signed .o files
+  process_monitor.o: ""
+  network_monitor.o: ""
+  file_monitor.o: ""
+  syscall_monitor.o: ""
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prysm-ebpf-collector
+  namespace: prysm-system
+spec:
+  podSelector:
+    matchLabels:
+      app: prysm-ebpf-collector
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS to Prysm API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow connection to cluster API server
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 6443
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prysm-ebpf-collector
+  namespace: prysm-system
+spec:
+  selector:
+    matchLabels:
+      app: prysm-ebpf-collector
+  maxUnavailable: 20%
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prysm-ebpf-collector-metrics
+  namespace: prysm-system
+  labels:
+    app: prysm-ebpf-collector
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: prysm-ebpf-collector

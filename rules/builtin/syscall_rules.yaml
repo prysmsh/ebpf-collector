@@ -1,0 +1,79 @@
+# Syscall-based detection rules
+
+- rule: ptrace process injection
+  desc: ptrace syscall detected, may indicate process injection or debugging
+  condition: >
+    evt.type == 'syscall' and
+    syscall.name == 'ptrace'
+  output: "ptrace by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1055, process_injection, mitre_defense_evasion]
+  metadata:
+    mitre_attck: "T1055 - Process Injection"
+
+- rule: Cross-process memory access
+  desc: process_vm_readv or process_vm_writev syscall detected
+  condition: >
+    evt.type == 'syscall' and
+    (syscall.name == 'process_vm_readv' or syscall.name == 'process_vm_writev')
+  output: "Cross-process memory access via %syscall.name% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1055.009, proc_memory, mitre_defense_evasion]
+  metadata:
+    mitre_attck: "T1055.009 - Proc Memory"
+
+- rule: Kernel module loading
+  desc: init_module or finit_module syscall detected, possible rootkit installation
+  condition: >
+    evt.type == 'syscall' and
+    (syscall.name == 'init_module' or syscall.name == 'finit_module')
+  output: "Kernel module loading by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: CRITICAL
+  tags: [T1547.006, rootkit, kernel_module, mitre_persistence]
+  metadata:
+    mitre_attck: "T1547.006 - Kernel Modules and Extensions"
+
+- rule: Kernel module removal
+  desc: delete_module syscall detected
+  condition: >
+    evt.type == 'syscall' and
+    syscall.name == 'delete_module'
+  output: "Kernel module removal by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1547.006, rootkit, kernel_module, mitre_defense_evasion]
+  metadata:
+    mitre_attck: "T1547.006 - Kernel Modules and Extensions"
+
+- rule: Fileless execution via memfd_create
+  desc: memfd_create syscall used to create anonymous file, may indicate fileless malware
+  condition: >
+    evt.type == 'syscall' and
+    syscall.name == 'memfd_create'
+  output: "memfd_create by %proc.name% (pid=%proc.pid% container=%container.name%) - possible fileless execution"
+  priority: WARNING
+  tags: [T1620, fileless, mitre_defense_evasion]
+  metadata:
+    mitre_attck: "T1620 - Reflective Code Loading"
+
+- rule: Fileless execution via execveat
+  desc: execveat syscall with non-AT_FDCWD fd, may indicate fileless execution
+  condition: >
+    evt.type == 'syscall' and
+    syscall.name == 'execveat'
+  output: "execveat by %proc.name% (pid=%proc.pid% container=%container.name%) - possible fileless execution"
+  priority: WARNING
+  tags: [T1620, fileless, mitre_defense_evasion]
+  metadata:
+    mitre_attck: "T1620 - Reflective Code Loading"
+
+- rule: Credential change to root
+  desc: A process changed credentials to UID 0 (root)
+  condition: >
+    evt.type == 'cred_change' and
+    cred.new_uid == 0 and
+    cred.old_uid != 0
+  output: "Privilege escalation to root: %proc.name% (pid=%proc.pid% old_uid=%cred.old_uid% container=%container.name%)"
+  priority: CRITICAL
+  tags: [T1068, privilege_escalation, cred_change, mitre_privilege_escalation]
+  metadata:
+    mitre_attck: "T1068 - Exploitation for Privilege Escalation"

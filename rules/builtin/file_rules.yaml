@@ -1,0 +1,91 @@
+# File access detection rules
+
+- rule: Sensitive credential file access
+  desc: Access to a file containing credentials or secrets
+  condition: >
+    evt.type == 'open' and
+    (file.path == '/etc/shadow' or
+     file.path == '/etc/gshadow' or
+     file.path == '/etc/sudoers' or
+     file.path.contains('.ssh/id_rsa') or
+     file.path.contains('.ssh/id_ed25519') or
+     file.path.contains('.ssh/authorized_keys') or
+     file.path.contains('.aws/credentials') or
+     file.path.contains('.kube/config') or
+     file.path.contains('.docker/config.json') or
+     file.path.contains('.git-credentials') or
+     file.path.contains('.netrc'))
+  output: "Credential file access: %file.path% by %proc.name% (pid=%proc.pid% uid=%proc.uid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1552, credential_access, mitre_credential_access]
+  metadata:
+    mitre_attck: "T1552 - Unsecured Credentials"
+
+- rule: Persistence mechanism modification
+  desc: Write to a file used for persistence (cron, systemd, shell profile)
+  condition: >
+    evt.type == 'open' and
+    file.flags > 0 and
+    (file.path.contains('/etc/cron') or
+     file.path.contains('/etc/systemd/system') or
+     file.path.contains('/.bashrc') or
+     file.path.contains('/.profile') or
+     file.path.contains('/etc/rc.local'))
+  output: "Persistence modification: %file.path% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: ALERT
+  tags: [T1053, persistence, mitre_persistence]
+  metadata:
+    mitre_attck: "T1053 - Scheduled Task/Job"
+
+- rule: Rootkit/LKM installation attempt
+  desc: Write operation to kernel module directory or ld.so.preload
+  condition: >
+    evt.type == 'open' and
+    file.flags > 0 and
+    (file.path.contains('/lib/modules') or
+     file.path.contains('ld.so.preload'))
+  output: "Rootkit/LKM indicator: %file.path% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: CRITICAL
+  tags: [T1547.006, rootkit, mitre_persistence]
+  metadata:
+    mitre_attck: "T1547.006 - Kernel Modules and Extensions"
+
+- rule: Kubernetes secret accessed
+  desc: A process read a Kubernetes-mounted secret file (ServiceAccount token, TLS cert, or opaque secret)
+  condition: >
+    evt.type == 'open' and
+    k8s_secret_path and
+    not proc.name in ['kubelet', 'kube-proxy']
+  output: "K8s secret read: %file.path% by %proc.name% (pid=%proc.pid% uid=%proc.uid% pod=%k8s.pod% ns=%k8s.ns% container=%container.name%)"
+  priority: WARNING
+  tags: [T1552.007, secret_access, credential_access, mitre_credential_access]
+  metadata:
+    mitre_attck: "T1552.007 - Container API"
+
+- rule: ServiceAccount token read by unexpected process
+  desc: A ServiceAccount token was read by a process that is not a known Kubernetes component — may indicate credential theft or lateral movement
+  condition: >
+    evt.type == 'open' and
+    k8s_sa_token and
+    not proc.name in ['kubelet', 'kube-proxy', 'coredns', 'kube-apiserver']
+  output: "SA token read: %file.path% by %proc.name% (pid=%proc.pid% uid=%proc.uid% pod=%k8s.pod% ns=%k8s.ns% container=%container.name%)"
+  priority: ALERT
+  tags: [T1552.007, sa_token, credential_theft, mitre_credential_access]
+  metadata:
+    mitre_attck: "T1552.007 - Container API"
+
+- rule: System file reconnaissance
+  desc: Access to system files that reveal configuration or process information
+  condition: >
+    evt.type == 'open' and
+    (file.path.contains('/etc/ld.so.conf') or
+     file.path.contains('/proc/') and file.path.contains('/maps') or
+     file.path.contains('/proc/') and file.path.contains('/mem') or
+     file.path.contains('/proc/') and file.path.contains('/cmdline') or
+     file.path == '/dev/mem' or
+     file.path == '/dev/kmem')
+  output: "System reconnaissance: %file.path% by %proc.name% (pid=%proc.pid% container=%container.name%)"
+  priority: WARNING
+  tags: [T1005, reconnaissance, mitre_collection]
+  metadata:
+    mitre_attck: "T1005 - Data from Local System"
